@@ -1,3 +1,10 @@
+// import { supabase } from "services/supabaseClient"
+
+// export default async function testConnection () {
+//   const {data,error}  = await supabase.from('documents').select('*');
+//   console.log(data,error)
+// }
+
 export default function Home() {
   return (
     <div className="h-screen flex items-center justify-center">
@@ -7,3 +14,4 @@ export default function Home() {
     </div>
   )
 }
+
