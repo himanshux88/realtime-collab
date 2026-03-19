@@ -107,6 +107,7 @@ export default function Dashboard() {
           documents.map((doc) => (
             <div
               key={doc.id}
+              onClick={()=>router.push(`/documents/${doc.id}`)}
               className="p-4 border rounded hover:bg-gray-100 cursor-pointer"
             >
               <h2 className="font-semibold">{doc.title}</h2>
