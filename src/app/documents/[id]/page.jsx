@@ -7,6 +7,7 @@ import { supabase } from "services/supabaseClient";
 
 export default function DocumentPage() {
   const { id } = useParams();
+  const [users, setUsers] = useState([]);
   const [document, setDocument] = useState(null);
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
@@ -33,6 +34,44 @@ export default function DocumentPage() {
         },
       )
       .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!id) return;
+
+    const channel = supabase.channel(`presence-${id}`, {
+      config: {
+        presence: {
+          key: Math.random().toString(),
+        },
+      },
+    });
+
+    channel.on(
+      "presence",
+      {
+        event: "sync",
+      },
+      () => {
+        const state = channel.presenceState();
+        console.log("Users in doc:", state);
+
+        const users = Object.values(state).flat();
+        setUsers(users);
+      },
+    );
+
+    channel.subscribe(async (status) => {
+      if (status === "SUBSCRIBED") {
+        await channel.track({
+          user_id: Date.now(),
+        });
+      }
+    });
 
     return () => {
       supabase.removeChannel(channel);
@@ -75,6 +114,18 @@ export default function DocumentPage() {
         }}
       />
       <p className="text-sm text-gray-500">{saving ? "Saving..." : "Saved"}</p>
+      <div className="mb-4">
+        <h2 className="font-semibold">Active Users:</h2>
+        {users.length === 0 ? (
+          <p>No one online</p>
+        ) : (
+          users.map((user, index) => (
+            <div key={index} className="text-sm">
+              User {user.user_id}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
