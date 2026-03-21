@@ -2,16 +2,24 @@
 
 import { getDocumentsById, updateDocument } from "features/documents/api";
 import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "services/supabaseClient";
 
 export default function DocumentPage() {
   const { id } = useParams();
-  const [users, setUsers] = useState([]);
+
+  const [presenceUsers, setPresenceUsers] = useState([]);
+  const [cursorMap, setCursorMap] = useState({});
   const [document, setDocument] = useState(null);
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [isLocalChange, setIsLocalChange] = useState(false);
+  const [cursor, setCursor] = useState({ x: 0, y: 0 });
+
+  const channelRef = useRef(null);
+  const userId = useRef(Date.now());
+  const lastUpdateRef = useRef(0);
+
 
   useEffect(() => {
     if (!id) return;
@@ -28,7 +36,6 @@ export default function DocumentPage() {
         },
         (payload) => {
           if (!isLocalChange) {
-            console.log("Realtime Update:", payload);
             setContent(payload.new.content);
           }
         },
@@ -40,43 +47,93 @@ export default function DocumentPage() {
     };
   }, [id]);
 
+  
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      const now = Date.now();
+      if (now - lastUpdateRef.current < 30) return;
+
+      lastUpdateRef.current = now;
+
+      setCursor({
+        x: e.clientX,
+        y: e.clientY,
+      });
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+    };
+  }, []);
+
+ 
   useEffect(() => {
     if (!id) return;
 
-    const channel = supabase.channel(`presence-${id}`, {
+    const newChannel = supabase.channel(`presence-${id}`, {
       config: {
         presence: {
           key: Math.random().toString(),
         },
+        broadcast: {
+          self: true,
+        },
       },
     });
 
-    channel.on(
-      "presence",
-      {
-        event: "sync",
-      },
-      () => {
-        const state = channel.presenceState();
-        console.log("Users in doc:", state);
+    channelRef.current = newChannel;
 
-        const users = Object.values(state).flat();
-        setUsers(users);
-      },
-    );
+  
+    newChannel.on("presence", { event: "sync" }, () => {
+      const state = newChannel.presenceState();
 
-    channel.subscribe(async (status) => {
+      const users = Object.entries(state).flatMap(([key, value]) =>
+        value.map((v) => ({
+          user_id: v.user_id || key,
+        })),
+      );
+
+      setPresenceUsers(users);
+    });
+
+   
+    newChannel.on("broadcast", { event: "cursor_move" }, (payload) => {
+      setCursorMap((prev) => ({
+        ...prev,
+        [payload.payload.user_id]: payload.payload.cursor,
+      }));
+    });
+
+   
+    newChannel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
-        await channel.track({
-          user_id: Date.now(),
+        await newChannel.track({
+          user_id: userId.current,
         });
       }
     });
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(newChannel);
     };
   }, [id]);
+
+  
+  useEffect(() => {
+    if (!channelRef.current || channelRef.current.state !== "joined") return;
+
+    channelRef.current.send({
+      type: "broadcast",
+      event: "cursor_move",
+      payload: {
+        user_id: userId.current,
+        cursor,
+      },
+    });
+  }, [cursor]);
+
 
   useEffect(() => {
     const fetchDoc = async () => {
@@ -88,21 +145,25 @@ export default function DocumentPage() {
     fetchDoc();
   }, [id]);
 
+
   useEffect(() => {
     if (!document || !isLocalChange) return;
 
     setSaving(true);
+
     const timeout = setTimeout(async () => {
       await updateDocument(id, content);
       setIsLocalChange(false);
       setSaving(false);
     }, 1000);
+
     return () => clearTimeout(timeout);
   }, [content, isLocalChange]);
 
   if (!document) return <div>Loading...</div>;
+
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-6 relative">
       <h1 className="text-2xl font-bold mb-4">{document.title}</h1>
 
       <textarea
@@ -113,19 +174,30 @@ export default function DocumentPage() {
           setIsLocalChange(true);
         }}
       />
+
       <p className="text-sm text-gray-500">{saving ? "Saving..." : "Saved"}</p>
-      <div className="mb-4">
-        <h2 className="font-semibold">Active Users:</h2>
-        {users.length === 0 ? (
-          <p>No one online</p>
-        ) : (
-          users.map((user, index) => (
-            <div key={index} className="text-sm">
-              User {user.user_id}
+
+      
+      {presenceUsers
+        .filter((user) => user.user_id !== userId.current)
+        .map((user, index) => {
+          const userCursor = cursorMap[user.user_id];
+
+          return (
+            <div
+              key={index}
+              className="absolute pointer-events-none"
+              style={{
+                left: userCursor?.x || 0,
+                top: userCursor?.y || 0,
+              }}
+            >
+              <div className="bg-blue-500 text-white text-xs px-2 py-1 rounded">
+                User {user.user_id}
+              </div>
             </div>
-          ))
-        )}
-      </div>
+          );
+        })}
     </div>
   );
 }
