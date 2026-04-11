@@ -1,5 +1,6 @@
 "use client";
 
+import { addComment, getComments } from "features/comments/api";
 import { getDocumentsById, updateDocument } from "features/documents/api";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -15,11 +16,14 @@ export default function DocumentPage() {
   const [saving, setSaving] = useState(false);
   const [isLocalChange, setIsLocalChange] = useState(false);
   const [cursor, setCursor] = useState({ x: 0, y: 0 });
+  const [selectedText, setSelectedText] = useState("");
+  const [commentText,setCommentText] = useState("");
+  const [comments,setComments] = useState([]);
+  const [error, setError] = useState(null);
 
   const channelRef = useRef(null);
   const userId = useRef(Date.now());
   const lastUpdateRef = useRef(0);
-
 
   useEffect(() => {
     if (!id) return;
@@ -47,7 +51,6 @@ export default function DocumentPage() {
     };
   }, [id]);
 
-  
   useEffect(() => {
     const handleMouseMove = (e) => {
       const now = Date.now();
@@ -68,7 +71,6 @@ export default function DocumentPage() {
     };
   }, []);
 
- 
   useEffect(() => {
     if (!id) return;
 
@@ -85,7 +87,6 @@ export default function DocumentPage() {
 
     channelRef.current = newChannel;
 
-  
     newChannel.on("presence", { event: "sync" }, () => {
       const state = newChannel.presenceState();
 
@@ -98,7 +99,6 @@ export default function DocumentPage() {
       setPresenceUsers(users);
     });
 
-   
     newChannel.on("broadcast", { event: "cursor_move" }, (payload) => {
       setCursorMap((prev) => ({
         ...prev,
@@ -106,7 +106,6 @@ export default function DocumentPage() {
       }));
     });
 
-   
     newChannel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
         await newChannel.track({
@@ -120,7 +119,6 @@ export default function DocumentPage() {
     };
   }, [id]);
 
-  
   useEffect(() => {
     if (!channelRef.current || channelRef.current.state !== "joined") return;
 
@@ -134,17 +132,19 @@ export default function DocumentPage() {
     });
   }, [cursor]);
 
-
   useEffect(() => {
     const fetchDoc = async () => {
-      const doc = await getDocumentsById(id);
-      setDocument(doc);
-      setContent(doc.content || "");
+      try {
+        const doc = await getDocumentsById(id);
+        setDocument(doc);
+        setContent(doc.content || "");
+      } catch (err) {
+        setError(err.message);
+      }
     };
 
     fetchDoc();
   }, [id]);
-
 
   useEffect(() => {
     if (!document || !isLocalChange) return;
@@ -160,6 +160,81 @@ export default function DocumentPage() {
     return () => clearTimeout(timeout);
   }, [content, isLocalChange]);
 
+  const handleTextSelect = () => {
+    const selectedText = window.getSelection().toString();
+    if (selectedText.length > 0) setSelectedText(selectedText);
+  };
+
+  const handleAddComment = async() => {
+    if(commentText)
+    await addComment({
+      document_id: id,
+      user_id: userId.current,
+      text: commentText,
+      selected_text: selectedText,
+    });
+    setCommentText("");
+    setSelectedText("");
+  }
+
+  useEffect(()=>{
+    const fetchComments = async() => {
+      const comments = await getComments(id);
+      setComments(comments);
+    }
+    fetchComments();
+  },[id])
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`comments-${id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "comments",
+          filter: `document_id=eq.${id}`,
+        },
+        (payload) => {
+          setComments((prev) => [...prev, payload.new]);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [id]);
+
+  const handleShare = async () => {
+  const { error } = await supabase
+    .from("documents")
+    .update({ is_public: true })
+    .eq("id", id);
+
+  if (!error) {
+    const link = `${window.location.origin}/documents/${id}`;
+    navigator.clipboard.writeText(link);
+    alert("Link copied!");
+  }
+};
+
+const toggleAccess = async () => {
+  const { error } = await supabase
+    .from("documents")
+    .update({ is_public: !document.is_public })
+    .eq("id", id);
+
+  if (!error) {
+    setDocument((prev) => ({
+      ...prev,
+      is_public: !prev.is_public,
+    }));
+  }
+};
+
+  if (error) return <div className="text-red-500 p-4">{error}</div>;
   if (!document) return <div>Loading...</div>;
 
   return (
@@ -173,11 +248,48 @@ export default function DocumentPage() {
           setContent(e.target.value);
           setIsLocalChange(true);
         }}
+        onMouseUp={handleTextSelect}
       />
 
       <p className="text-sm text-gray-500">{saving ? "Saving..." : "Saved"}</p>
+      <button
+        className="bg-green-500 text-white px-4 py-2 mb-4"
+        onClick={handleShare}
+      >
+        Share Document
+      </button>
+      <p className="text-sm text-gray-500">
+        {document.is_public ? "Public" : "Private"}
+      </p>
+      {selectedText && (
+        <div className="mt-4 p-2 border rounded">
+          <p className="text-sm">Selected: "{selectedText}"</p>
 
-      
+          <input
+            className="border p-2 w-full mt-2"
+            placeholder="Add comment..."
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+          />
+
+          <button
+            className="bg-blue-500 text-white px-4 py-2 mt-2"
+            onClick={handleAddComment}
+          >
+            Add Comment
+          </button>
+        </div>
+      )}
+      <div className="mt-6">
+        <h2 className="font-semibold">Comments</h2>
+
+        {comments.map((c) => (
+          <div key={c.id} className="border p-2 mt-2 rounded">
+            <p className="text-sm text-gray-500">On: "{c.selected_text}"</p>
+            <p>{c.text}</p>
+          </div>
+        ))}
+      </div>
       {presenceUsers
         .filter((user) => user.user_id !== userId.current)
         .map((user, index) => {

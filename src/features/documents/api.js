@@ -8,7 +8,7 @@ export const createDocument = async (title) => {
   const { data, error } = await supabase.from("documents").insert([
     {
       title,
-      owner_id: user.id,
+      user_id: user.id,
       content: "",
     },
   ]);
@@ -36,6 +36,22 @@ export const getDocumentsById = async (id) => {
 
   if (error) {
     throw error;
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (data.is_public) {
+    return data;
+  }
+
+  if (!user) {
+    throw new Error("Unauthorized");
+  }
+
+  if (String(user.id) !== String(data.user_id)) {
+    throw new Error("Unauthorized");
   }
 
   return data;
