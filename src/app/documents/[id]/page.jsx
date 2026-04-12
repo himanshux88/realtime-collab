@@ -1,10 +1,18 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import { supabase } from "services/supabaseClient";
 import { addComment, getComments } from "features/comments/api";
 import { getDocumentsById, updateDocument } from "features/documents/api";
-import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { supabase } from "services/supabaseClient";
+
+import TopBar from "components/layout/TopBar";
+import EditorToolbar from "components/editor/EditorToolbar";
+import EditorArea from "components/editor/EditorArea";
+import LiveCursor from "components/editor/LiveCursor";
+import CommentsPanel from "components/comments/CommentsPanel";
+import ShareModal from "components/share/ShareModal";
+import { EditorSkeleton } from "components/ui/Skeleton";
 
 export default function DocumentPage() {
   const { id } = useParams();
@@ -17,17 +25,19 @@ export default function DocumentPage() {
   const [isLocalChange, setIsLocalChange] = useState(false);
   const [cursor, setCursor] = useState({ x: 0, y: 0 });
   const [selectedText, setSelectedText] = useState("");
-  const [commentText,setCommentText] = useState("");
-  const [comments,setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+  const [comments, setComments] = useState([]);
   const [error, setError] = useState(null);
+  const [showComments, setShowComments] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const channelRef = useRef(null);
   const userId = useRef(Date.now());
   const lastUpdateRef = useRef(0);
 
+  /* ── Real-time document sync ── */
   useEffect(() => {
     if (!id) return;
-
     const channel = supabase
       .channel("realtime-doc")
       .on(
@@ -51,37 +61,29 @@ export default function DocumentPage() {
     };
   }, [id]);
 
+  /* ── Mouse tracking (throttled) ── */
   useEffect(() => {
     const handleMouseMove = (e) => {
       const now = Date.now();
       if (now - lastUpdateRef.current < 30) return;
-
       lastUpdateRef.current = now;
-
-      setCursor({
-        x: e.clientX,
-        y: e.clientY,
-      });
+      setCursor({ x: e.clientX, y: e.clientY });
     };
 
     window.addEventListener("mousemove", handleMouseMove);
-
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
     };
   }, []);
 
+  /* ── Presence channel ── */
   useEffect(() => {
     if (!id) return;
 
     const newChannel = supabase.channel(`presence-${id}`, {
       config: {
-        presence: {
-          key: Math.random().toString(),
-        },
-        broadcast: {
-          self: true,
-        },
+        presence: { key: Math.random().toString() },
+        broadcast: { self: true },
       },
     });
 
@@ -89,13 +91,9 @@ export default function DocumentPage() {
 
     newChannel.on("presence", { event: "sync" }, () => {
       const state = newChannel.presenceState();
-
       const users = Object.entries(state).flatMap(([key, value]) =>
-        value.map((v) => ({
-          user_id: v.user_id || key,
-        })),
+        value.map((v) => ({ user_id: v.user_id || key })),
       );
-
       setPresenceUsers(users);
     });
 
@@ -108,9 +106,7 @@ export default function DocumentPage() {
 
     newChannel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
-        await newChannel.track({
-          user_id: userId.current,
-        });
+        await newChannel.track({ user_id: userId.current });
       }
     });
 
@@ -119,19 +115,17 @@ export default function DocumentPage() {
     };
   }, [id]);
 
+  /* ── Broadcast cursor position ── */
   useEffect(() => {
     if (!channelRef.current || channelRef.current.state !== "joined") return;
-
     channelRef.current.send({
       type: "broadcast",
       event: "cursor_move",
-      payload: {
-        user_id: userId.current,
-        cursor,
-      },
+      payload: { user_id: userId.current, cursor },
     });
   }, [cursor]);
 
+  /* ── Fetch document ── */
   useEffect(() => {
     const fetchDoc = async () => {
       try {
@@ -142,31 +136,30 @@ export default function DocumentPage() {
         setError(err.message);
       }
     };
-
     fetchDoc();
   }, [id]);
 
+  /* ── Auto-save (1s debounce) ── */
   useEffect(() => {
     if (!document || !isLocalChange) return;
-
     setSaving(true);
-
     const timeout = setTimeout(async () => {
       await updateDocument(id, content);
       setIsLocalChange(false);
       setSaving(false);
     }, 1000);
-
     return () => clearTimeout(timeout);
   }, [content, isLocalChange]);
 
+  /* ── Text selection for comments ── */
   const handleTextSelect = () => {
-    const selectedText = window.getSelection().toString();
-    if (selectedText.length > 0) setSelectedText(selectedText);
+    const selected = window.getSelection().toString();
+    if (selected.length > 0) setSelectedText(selected);
   };
 
-  const handleAddComment = async() => {
-    if(commentText)
+  /* ── Add comment ── */
+  const handleAddComment = async () => {
+    if (!commentText) return;
     await addComment({
       document_id: id,
       user_id: userId.current,
@@ -175,16 +168,22 @@ export default function DocumentPage() {
     });
     setCommentText("");
     setSelectedText("");
-  }
+  };
 
-  useEffect(()=>{
-    const fetchComments = async() => {
-      const comments = await getComments(id);
-      setComments(comments);
-    }
+  /* ── Fetch comments ── */
+  useEffect(() => {
+    const fetchComments = async () => {
+      try {
+        const data = await getComments(id);
+        setComments(data);
+      } catch (err) {
+        console.error("Failed to fetch comments:", err);
+      }
+    };
     fetchComments();
-  },[id])
+  }, [id]);
 
+  /* ── Real-time comments ── */
   useEffect(() => {
     const channel = supabase
       .channel(`comments-${id}`)
@@ -207,109 +206,124 @@ export default function DocumentPage() {
     };
   }, [id]);
 
-  const handleShare = async () => {
-  const { error } = await supabase
-    .from("documents")
-    .update({ is_public: true })
-    .eq("id", id);
+  /* ── Toggle document access ── */
+  const toggleAccess = async () => {
+    const { error: err } = await supabase
+      .from("documents")
+      .update({ is_public: !document.is_public })
+      .eq("id", id);
 
-  if (!error) {
-    const link = `${window.location.origin}/documents/${id}`;
-    navigator.clipboard.writeText(link);
-    alert("Link copied!");
+    if (!err) {
+      setDocument((prev) => ({ ...prev, is_public: !prev.is_public }));
+    }
+  };
+
+  /* ── Error state ── */
+  if (error) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-bg">
+        <div className="text-center animate-fade-in">
+          <div className="w-16 h-16 rounded-full bg-red-50 mx-auto mb-4 flex items-center justify-center">
+            <svg
+              className="w-8 h-8 text-red-400"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-slate-900 mb-1">
+            Access Denied
+          </h2>
+          <p className="text-sm text-slate-500">{error}</p>
+        </div>
+      </div>
+    );
   }
-};
 
-const toggleAccess = async () => {
-  const { error } = await supabase
-    .from("documents")
-    .update({ is_public: !document.is_public })
-    .eq("id", id);
-
-  if (!error) {
-    setDocument((prev) => ({
-      ...prev,
-      is_public: !prev.is_public,
-    }));
+  /* ── Loading state ── */
+  if (!document) {
+    return (
+      <div className="min-h-screen bg-white">
+        <div className="h-16 bg-white border-b border-slate-200/60" />
+        <EditorSkeleton />
+      </div>
+    );
   }
-};
-
-  if (error) return <div className="text-red-500 p-4">{error}</div>;
-  if (!document) return <div>Loading...</div>;
 
   return (
-    <div className="min-h-screen p-6 relative">
-      <h1 className="text-2xl font-bold mb-4">{document.title}</h1>
-
-      <textarea
-        className="w-full h-100 border p-4"
-        value={content}
-        onChange={(e) => {
-          setContent(e.target.value);
-          setIsLocalChange(true);
-        }}
-        onMouseUp={handleTextSelect}
+    <div className="min-h-screen bg-white flex flex-col">
+      {/* Top Bar */}
+      <TopBar
+        title={document.title}
+        saving={saving}
+        presenceUsers={presenceUsers.filter(
+          (u) => u.user_id !== userId.current,
+        )}
+        onToggleComments={() => setShowComments(!showComments)}
+        onShare={() => setShowShareModal(true)}
+        commentsOpen={showComments}
+        commentCount={comments.length}
       />
 
-      <p className="text-sm text-gray-500">{saving ? "Saving..." : "Saved"}</p>
-      <button
-        className="bg-green-500 text-white px-4 py-2 mb-4"
-        onClick={handleShare}
-      >
-        Share Document
-      </button>
-      <p className="text-sm text-gray-500">
-        {document.is_public ? "Public" : "Private"}
-      </p>
-      {selectedText && (
-        <div className="mt-4 p-2 border rounded">
-          <p className="text-sm">Selected: "{selectedText}"</p>
-
-          <input
-            className="border p-2 w-full mt-2"
-            placeholder="Add comment..."
-            value={commentText}
-            onChange={(e) => setCommentText(e.target.value)}
-          />
-
-          <button
-            className="bg-blue-500 text-white px-4 py-2 mt-2"
-            onClick={handleAddComment}
-          >
-            Add Comment
-          </button>
-        </div>
-      )}
-      <div className="mt-6">
-        <h2 className="font-semibold">Comments</h2>
-
-        {comments.map((c) => (
-          <div key={c.id} className="border p-2 mt-2 rounded">
-            <p className="text-sm text-gray-500">On: "{c.selected_text}"</p>
-            <p>{c.text}</p>
+      <div className="flex-1 flex relative">
+        {/* Editor section */}
+        <div
+          className={`flex-1 flex flex-col transition-all duration-300 ${showComments ? "md:mr-[360px]" : ""}`}
+        >
+          {/* Toolbar */}
+          <div className="flex justify-center px-4 py-3 border-b border-slate-100">
+            <EditorToolbar />
           </div>
-        ))}
+
+          {/* Editor */}
+          <EditorArea
+            content={content}
+            onChange={(e) => {
+              setContent(e.target.value);
+              setIsLocalChange(true);
+            }}
+            onMouseUp={handleTextSelect}
+          />
+        </div>
+
+        {/* Comments Panel */}
+        <CommentsPanel
+          isOpen={showComments}
+          onClose={() => setShowComments(false)}
+          comments={comments}
+          selectedText={selectedText}
+          commentText={commentText}
+          onCommentTextChange={setCommentText}
+          onAddComment={handleAddComment}
+        />
       </div>
+
+      {/* Share Modal */}
+      <ShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        documentId={id}
+        isPublic={document.is_public}
+        onToggleAccess={toggleAccess}
+      />
+
+      {/* Live cursors */}
       {presenceUsers
         .filter((user) => user.user_id !== userId.current)
-        .map((user, index) => {
-          const userCursor = cursorMap[user.user_id];
-
-          return (
-            <div
-              key={index}
-              className="absolute pointer-events-none"
-              style={{
-                left: userCursor?.x || 0,
-                top: userCursor?.y || 0,
-              }}
-            >
-              <div className="bg-blue-500 text-white text-xs px-2 py-1 rounded">
-                User {user.user_id}
-              </div>
-            </div>
-          );
-        })}
+        .map((user, index) => (
+          <LiveCursor
+            key={index}
+            userId={user.user_id}
+            position={cursorMap[user.user_id]}
+          />
+        ))}
     </div>
   );
 }
