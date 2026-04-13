@@ -37,7 +37,7 @@ export default function Modal({ isOpen, onClose, title, children, className }) {
       <div
         ref={modalRef}
         className={cn(
-          "relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6",
+          "relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto",
           "animate-scale-in",
           className,
         )}

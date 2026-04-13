@@ -56,6 +56,18 @@ export default function DocumentCard({
             {document.title}
           </h3>
         </div>
+        {document._sharedRole && (
+          <span
+            className={cn(
+              "px-2 py-0.5 rounded-full text-[10px] font-semibold flex-shrink-0",
+              document._sharedRole === "editor"
+                ? "bg-primary-light text-primary"
+                : "bg-amber-50 text-amber-600",
+            )}
+          >
+            {document._sharedRole === "editor" ? "Can Edit" : "View Only"}
+          </span>
+        )}
         <span className="text-xs text-slate-400 flex-shrink-0">
           {timeAgo(document.updated_at || document.created_at)}
         </span>
@@ -110,9 +122,23 @@ export default function DocumentCard({
           <h3 className="font-semibold text-slate-900 truncate group-hover:text-primary transition-colors">
             {document.title}
           </h3>
-          <p className="text-xs text-slate-400 mt-1.5">
-            {timeAgo(document.updated_at || document.created_at)}
-          </p>
+          <div className="flex items-center gap-2 mt-1.5">
+            <p className="text-xs text-slate-400">
+              {timeAgo(document.updated_at || document.created_at)}
+            </p>
+            {document._sharedRole && (
+              <span
+                className={cn(
+                  "px-2 py-0.5 rounded-full text-[10px] font-semibold",
+                  document._sharedRole === "editor"
+                    ? "bg-primary-light text-primary"
+                    : "bg-amber-50 text-amber-600",
+                )}
+              >
+                {document._sharedRole === "editor" ? "Can Edit" : "View Only"}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

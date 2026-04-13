@@ -4,33 +4,22 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "services/supabaseClient";
 import { getCurrentUser, signOut } from "features/auth/api";
-import {
-  createDocument,
-  getDocuments,
-  getSharedDocuments,
-} from "features/documents/api";
+import { getSharedDocuments } from "features/documents/api";
 
 import Sidebar from "components/layout/Sidebar";
 import MobileDrawer from "components/layout/MobileDrawer";
 import SearchBar from "components/dashboard/SearchBar";
 import DocumentGrid from "components/dashboard/DocumentGrid";
-import EmptyState from "components/dashboard/EmptyState";
 import Button from "components/ui/Button";
-import Modal from "components/ui/Modal";
-import Input from "components/ui/Input";
 
-export default function Dashboard() {
+export default function SharedWithMe() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
-  const [documents, setDocuments] = useState([]);
   const [sharedDocs, setSharedDocs] = useState([]);
   const [documentsLoading, setDocumentsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("grid");
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const [creating, setCreating] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   /* ── Auth check ── */
@@ -63,43 +52,22 @@ export default function Dashboard() {
     };
   }, [router]);
 
-  /* ── Fetch owned + shared documents ── */
+  /* ── Fetch shared documents ── */
   useEffect(() => {
     if (!user) return;
-    const fetchDocuments = async () => {
+    const fetchShared = async () => {
       setDocumentsLoading(true);
       try {
-        const [docs, shared] = await Promise.all([
-          getDocuments(),
-          getSharedDocuments(),
-        ]);
-        setDocuments(docs);
-        setSharedDocs(shared);
+        const docs = await getSharedDocuments();
+        setSharedDocs(docs);
       } catch (err) {
-        console.error("Failed to fetch documents:", err);
+        console.error("Failed to fetch shared documents:", err);
       } finally {
         setDocumentsLoading(false);
       }
     };
-    fetchDocuments();
+    fetchShared();
   }, [user]);
-
-  /* ── Create document ── */
-  const handleCreate = async () => {
-    if (!newTitle.trim()) return;
-    setCreating(true);
-    try {
-      await createDocument(newTitle.trim());
-      setNewTitle("");
-      setShowCreateModal(false);
-      const docs = await getDocuments();
-      setDocuments(docs);
-    } catch (err) {
-      console.error("Failed to create document:", err);
-    } finally {
-      setCreating(false);
-    }
-  };
 
   /* ── Logout ── */
   const handleLogout = async () => {
@@ -107,12 +75,8 @@ export default function Dashboard() {
     router.push("/login");
   };
 
-  /* ── Filter by search query ── */
-  const filteredDocuments = documents.filter((doc) =>
-    doc.title.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
-
-  const filteredSharedDocs = sharedDocs.filter((doc) =>
+  /* ── Filter ── */
+  const filteredDocs = sharedDocs.filter((doc) =>
     doc.title.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
@@ -186,12 +150,31 @@ export default function Dashboard() {
         <div className="p-6 md:p-8 lg:p-10 max-w-6xl">
           {/* Page heading */}
           <div className="mb-8">
-            <h1 className="text-2xl md:text-3xl font-bold text-slate-900">
-              My Documents
-            </h1>
-            <p className="text-slate-500 mt-1">
-              Create and manage your documents
-            </p>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center">
+                <svg
+                  className="w-5 h-5 text-primary"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={1.5}
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"
+                  />
+                </svg>
+              </div>
+              <div>
+                <h1 className="text-2xl md:text-3xl font-bold text-slate-900">
+                  Shared with Me
+                </h1>
+                <p className="text-slate-500 mt-0.5">
+                  Documents others have shared with you
+                </p>
+              </div>
+            </div>
           </div>
 
           {/* Actions bar */}
@@ -251,8 +234,11 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              {/* Create button */}
-              <Button onClick={() => setShowCreateModal(true)}>
+              {/* Back to dashboard */}
+              <Button
+                variant="secondary"
+                onClick={() => router.push("/dashboard")}
+              >
                 <svg
                   className="w-4 h-4"
                   fill="none"
@@ -263,10 +249,10 @@ export default function Dashboard() {
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    d="M12 4.5v15m7.5-7.5h-15"
+                    d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z"
                   />
                 </svg>
-                <span className="hidden sm:inline">New Document</span>
+                <span className="hidden sm:inline">My Docs</span>
               </Button>
             </div>
           </div>
@@ -274,122 +260,58 @@ export default function Dashboard() {
           {/* Content */}
           {documentsLoading ? (
             <DocumentGrid loading viewMode={viewMode} documents={[]} />
-          ) : documents.length === 0 && sharedDocs.length === 0 ? (
-            <EmptyState onCreateDocument={() => setShowCreateModal(true)} />
-          ) : (
-            <>
-              {/* ── Owned Documents ── */}
-              {filteredDocuments.length === 0 && searchQuery ? (
-                <div className="text-center py-12">
-                  <p className="text-slate-400">
-                    No documents matching &quot;{searchQuery}&quot;
-                  </p>
-                </div>
-              ) : filteredDocuments.length > 0 ? (
-                <DocumentGrid
-                  documents={filteredDocuments}
-                  viewMode={viewMode}
-                  onDocumentClick={(docId) =>
-                    router.push(`/documents/${docId}`)
-                  }
-                />
-              ) : documents.length === 0 ? (
-                <div className="text-center py-12 mb-4">
-                  <p className="text-slate-400">
-                    You haven&apos;t created any documents yet.
-                  </p>
-                </div>
-              ) : null}
-
-              {/* ── Shared with Me ── */}
-              {sharedDocs.length > 0 && (
-                <div className="mt-12">
-                  <div className="mb-6 flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <svg
-                        className="w-5 h-5 text-primary"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        strokeWidth={1.5}
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"
-                        />
-                      </svg>
-                      <h2 className="text-xl font-bold text-slate-900">
-                        Shared with Me
-                      </h2>
-                    </div>
-                    <span className="px-2.5 py-1 rounded-full bg-primary-light text-primary text-xs font-semibold">
-                      {sharedDocs.length}
-                    </span>
-                  </div>
-
-                  {filteredSharedDocs.length === 0 && searchQuery ? (
-                    <div className="text-center py-8">
-                      <p className="text-sm text-slate-400">
-                        No shared documents matching &quot;{searchQuery}&quot;
-                      </p>
-                    </div>
-                  ) : (
-                    <DocumentGrid
-                      documents={filteredSharedDocs}
-                      viewMode={viewMode}
-                      onDocumentClick={(docId) =>
-                        router.push(`/documents/${docId}`)
-                      }
+          ) : sharedDocs.length === 0 ? (
+            /* ── Empty State ── */
+            <div className="flex flex-col items-center justify-center py-20 px-4">
+              <div className="w-32 h-32 mb-8 relative">
+                <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-primary/5 to-accent/10 rotate-6" />
+                <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-primary/10 to-accent/5 -rotate-3" />
+                <div className="relative w-full h-full rounded-3xl bg-white border-2 border-dashed border-slate-200 flex items-center justify-center">
+                  <svg
+                    className="w-12 h-12 text-slate-300"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1}
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"
                     />
-                  )}
+                  </svg>
                 </div>
-              )}
-            </>
+              </div>
+              <h3 className="text-xl font-semibold text-slate-900 mb-2">
+                No shared documents yet
+              </h3>
+              <p className="text-slate-500 text-sm mb-8 text-center max-w-sm">
+                When someone invites you to collaborate on a document, it will
+                appear here.
+              </p>
+              <Button
+                variant="secondary"
+                onClick={() => router.push("/dashboard")}
+                size="lg"
+              >
+                Go to My Documents
+              </Button>
+            </div>
+          ) : filteredDocs.length === 0 ? (
+            <div className="text-center py-16">
+              <p className="text-slate-400">
+                No shared documents matching &quot;{searchQuery}&quot;
+              </p>
+            </div>
+          ) : (
+            <DocumentGrid
+              documents={filteredDocs}
+              viewMode={viewMode}
+              onDocumentClick={(docId) => router.push(`/documents/${docId}`)}
+            />
           )}
         </div>
       </main>
-
-      {/* Create Document Modal */}
-      <Modal
-        isOpen={showCreateModal}
-        onClose={() => {
-          setShowCreateModal(false);
-          setNewTitle("");
-        }}
-        title="Create New Document"
-      >
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleCreate();
-          }}
-          className="space-y-6"
-        >
-          <Input
-            label="Document Title"
-            placeholder="Enter a title for your document..."
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            autoFocus
-          />
-          <div className="flex gap-3 justify-end">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowCreateModal(false);
-                setNewTitle("");
-              }}
-              type="button"
-            >
-              Cancel
-            </Button>
-            <Button type="submit" loading={creating}>
-              Create
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "services/supabaseClient";
+import { getCurrentUser } from "features/auth/api";
 import { addComment, getComments } from "features/comments/api";
 import { getDocumentsById, updateDocument } from "features/documents/api";
+import { getUserRole } from "features/collaborators/api";
 
 import TopBar from "components/layout/TopBar";
 import EditorToolbar from "components/editor/EditorToolbar";
@@ -17,6 +19,8 @@ import { EditorSkeleton } from "components/ui/Skeleton";
 export default function DocumentPage() {
   const { id } = useParams();
 
+  const [currentUser, setCurrentUser] = useState(null);
+  const [userRole, setUserRole] = useState(null);
   const [presenceUsers, setPresenceUsers] = useState([]);
   const [cursorMap, setCursorMap] = useState({});
   const [document, setDocument] = useState(null);
@@ -34,12 +38,48 @@ export default function DocumentPage() {
   const channelRef = useRef(null);
   const userId = useRef(Date.now());
   const lastUpdateRef = useRef(0);
+  const isLocalChangeRef = useRef(false);
+
+  /** Whether the current user can edit the document */
+  const canEdit = userRole === "owner" || userRole === "editor";
+
+  /* ── Fetch current user, document, and determine role ── */
+  useEffect(() => {
+    const init = async () => {
+      try {
+        // Get the authenticated user (may be null for public docs)
+        const user = await getCurrentUser();
+        setCurrentUser(user);
+
+        // Fetch the document (access control handled in API)
+        const doc = await getDocumentsById(id);
+        setDocument(doc);
+        setContent(doc.content || "");
+
+        // Determine the user's role for this document
+        if (!user) {
+          // Anonymous user viewing a public document
+          setUserRole(doc.is_public ? "viewer" : null);
+        } else {
+          try {
+            const role = await getUserRole(id);
+            setUserRole(role || (doc.is_public ? "viewer" : null));
+          } catch {
+            setUserRole(doc.is_public ? "viewer" : null);
+          }
+        }
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    init();
+  }, [id]);
 
   /* ── Real-time document sync ── */
   useEffect(() => {
     if (!id) return;
     const channel = supabase
-      .channel("realtime-doc")
+      .channel(`realtime-doc-${id}`)
       .on(
         "postgres_changes",
         {
@@ -49,7 +89,8 @@ export default function DocumentPage() {
           filter: `id=eq.${id}`,
         },
         (payload) => {
-          if (!isLocalChange) {
+          // Use ref (not state) to get the current value inside the closure
+          if (!isLocalChangeRef.current) {
             setContent(payload.new.content);
           }
         },
@@ -125,31 +166,22 @@ export default function DocumentPage() {
     });
   }, [cursor]);
 
-  /* ── Fetch document ── */
+  /* ── Auto-save (1s debounce) — only if user can edit ── */
   useEffect(() => {
-    const fetchDoc = async () => {
-      try {
-        const doc = await getDocumentsById(id);
-        setDocument(doc);
-        setContent(doc.content || "");
-      } catch (err) {
-        setError(err.message);
-      }
-    };
-    fetchDoc();
-  }, [id]);
-
-  /* ── Auto-save (1s debounce) ── */
-  useEffect(() => {
-    if (!document || !isLocalChange) return;
+    if (!document || !isLocalChange || !canEdit) return;
     setSaving(true);
     const timeout = setTimeout(async () => {
-      await updateDocument(id, content);
+      try {
+        await updateDocument(id, content);
+      } catch (err) {
+        console.error("Auto-save failed:", err);
+      }
       setIsLocalChange(false);
+      isLocalChangeRef.current = false;
       setSaving(false);
     }, 1000);
     return () => clearTimeout(timeout);
-  }, [content, isLocalChange]);
+  }, [content, isLocalChange, canEdit]);
 
   /* ── Text selection for comments ── */
   const handleTextSelect = () => {
@@ -157,12 +189,12 @@ export default function DocumentPage() {
     if (selected.length > 0) setSelectedText(selected);
   };
 
-  /* ── Add comment ── */
+  /* ── Add comment (uses real auth user ID when available) ── */
   const handleAddComment = async () => {
     if (!commentText) return;
     await addComment({
       document_id: id,
-      user_id: userId.current,
+      user_id: currentUser?.id || userId.current,
       text: commentText,
       selected_text: selectedText,
     });
@@ -206,8 +238,9 @@ export default function DocumentPage() {
     };
   }, [id]);
 
-  /* ── Toggle document access ── */
+  /* ── Toggle document access (owner only) ── */
   const toggleAccess = async () => {
+    if (userRole !== "owner") return;
     const { error: err } = await supabase
       .from("documents")
       .update({ is_public: !document.is_public })
@@ -270,6 +303,7 @@ export default function DocumentPage() {
         onShare={() => setShowShareModal(true)}
         commentsOpen={showComments}
         commentCount={comments.length}
+        userRole={userRole}
       />
 
       <div className="flex-1 flex relative">
@@ -279,7 +313,7 @@ export default function DocumentPage() {
         >
           {/* Toolbar */}
           <div className="flex justify-center px-4 py-3 border-b border-slate-100">
-            <EditorToolbar />
+            <EditorToolbar disabled={!canEdit} />
           </div>
 
           {/* Editor */}
@@ -288,8 +322,10 @@ export default function DocumentPage() {
             onChange={(e) => {
               setContent(e.target.value);
               setIsLocalChange(true);
+              isLocalChangeRef.current = true;
             }}
             onMouseUp={handleTextSelect}
+            readOnly={!canEdit}
           />
         </div>
 
@@ -305,14 +341,16 @@ export default function DocumentPage() {
         />
       </div>
 
-      {/* Share Modal */}
-      <ShareModal
-        isOpen={showShareModal}
-        onClose={() => setShowShareModal(false)}
-        documentId={id}
-        isPublic={document.is_public}
-        onToggleAccess={toggleAccess}
-      />
+      {/* Share Modal — rendered only for owner */}
+      {userRole === "owner" && (
+        <ShareModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          documentId={id}
+          isPublic={document.is_public}
+          onToggleAccess={toggleAccess}
+        />
+      )}
 
       {/* Live cursors */}
       {presenceUsers

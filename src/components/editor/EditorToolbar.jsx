@@ -35,13 +35,14 @@ const toolbarButtons = [
   },
 ];
 
-export default function EditorToolbar({ className }) {
+export default function EditorToolbar({ className, disabled }) {
   return (
     <div
       className={cn(
         "inline-flex items-center gap-0.5 px-2 py-1.5 rounded-xl",
         "bg-white border border-slate-200/60 shadow-sm",
         "overflow-x-auto scrollbar-none",
+        disabled && "opacity-50 pointer-events-none",
         className,
       )}
     >

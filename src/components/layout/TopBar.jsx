@@ -14,6 +14,7 @@ export default function TopBar({
   onShare,
   commentsOpen,
   commentCount,
+  userRole,
 }) {
   const router = useRouter();
 
@@ -44,11 +45,17 @@ export default function TopBar({
           <h1 className="text-lg font-semibold text-slate-900 truncate flex-1 min-w-0">
             {title || "Untitled Document"}
           </h1>
+
+          {userRole === "viewer" && (
+            <span className="flex-shrink-0 ml-2 px-2.5 py-1 rounded-full bg-amber-50 text-amber-600 text-[11px] font-semibold border border-amber-100 whitespace-nowrap">
+              View Only
+            </span>
+          )}
         </div>
 
         {/* Right – Actions */}
         <div className="flex items-center gap-2 md:gap-3 flex-shrink-0">
-          <SaveStatus saving={saving} />
+          {userRole !== "viewer" && <SaveStatus saving={saving} />}
 
           <div className="hidden sm:block">
             <PresenceAvatars users={presenceUsers} />
@@ -84,23 +91,25 @@ export default function TopBar({
             </div>
           </IconButton>
 
-          {/* Share button */}
-          <Button size="sm" onClick={onShare}>
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z"
-              />
-            </svg>
-            <span className="hidden sm:inline">Share</span>
-          </Button>
+          {/* Share button — owner only */}
+          {userRole === "owner" && (
+            <Button size="sm" onClick={onShare}>
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z"
+                />
+              </svg>
+              <span className="hidden sm:inline">Share</span>
+            </Button>
+          )}
         </div>
       </div>
     </header>
