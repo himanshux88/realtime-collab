@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import { useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Underline from "@tiptap/extension-underline";
+import Highlight from "@tiptap/extension-highlight";
+import TextAlign from "@tiptap/extension-text-align";
+import Placeholder from "@tiptap/extension-placeholder";
+
 import { supabase } from "services/supabaseClient";
 import { getCurrentUser } from "features/auth/api";
 import { addComment, getComments } from "features/comments/api";
@@ -24,7 +31,6 @@ export default function DocumentPage() {
   const [presenceUsers, setPresenceUsers] = useState([]);
   const [cursorMap, setCursorMap] = useState({});
   const [document, setDocument] = useState(null);
-  const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [isLocalChange, setIsLocalChange] = useState(false);
   const [cursor, setCursor] = useState({ x: 0, y: 0 });
@@ -38,10 +44,76 @@ export default function DocumentPage() {
   const channelRef = useRef(null);
   const userId = useRef(Date.now());
   const lastUpdateRef = useRef(0);
+  const contentRef = useRef("");
+
+  /**
+   * KEY FLAG: When true, the next onUpdate is from us calling setContent()
+   * programmatically (init load or remote sync), NOT from a real user edit.
+   * This prevents programmatic changes from triggering auto-save.
+   */
+  const isProgrammaticRef = useRef(false);
+
+  /**
+   * True when the user has made a local edit that hasn't been echoed back yet.
+   * Used to block incoming remote updates while the user is actively typing.
+   */
   const isLocalChangeRef = useRef(false);
 
   /** Whether the current user can edit the document */
   const canEdit = userRole === "owner" || userRole === "editor";
+
+  /* ── Tiptap editor instance ── */
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+      }),
+      Underline,
+      Highlight.configure({ multicolor: false }),
+      TextAlign.configure({
+        types: ["heading", "paragraph"],
+      }),
+      Placeholder.configure({
+        placeholder: "Start writing something amazing...",
+      }),
+    ],
+    immediatelyRender: false,
+    editable: canEdit,
+    onUpdate: ({ editor: ed }) => {
+      // If this update was caused by our own setContent() call, ignore it.
+      // This prevents init loads and remote syncs from triggering auto-save.
+      if (isProgrammaticRef.current) return;
+
+      const html = ed.getHTML();
+      contentRef.current = html;
+      setIsLocalChange(true);
+      isLocalChangeRef.current = true;
+    },
+    onSelectionUpdate: ({ editor: ed }) => {
+      const { from, to } = ed.state.selection;
+      if (from !== to) {
+        setSelectedText(ed.state.doc.textBetween(from, to, " "));
+      }
+    },
+  });
+
+  /**
+   * Safely set editor content without triggering onUpdate / auto-save.
+   * Wraps setContent with the isProgrammaticRef flag.
+   */
+  const setEditorContentSilently = (content) => {
+    if (!editor) return;
+    isProgrammaticRef.current = true;
+    editor.commands.setContent(content);
+    isProgrammaticRef.current = false;
+  };
+
+  /* ── Sync editable state when canEdit changes ── */
+  useEffect(() => {
+    if (editor) {
+      editor.setEditable(canEdit);
+    }
+  }, [canEdit, editor]);
 
   /* ── Fetch current user, document, and determine role ── */
   useEffect(() => {
@@ -54,11 +126,14 @@ export default function DocumentPage() {
         // Fetch the document (access control handled in API)
         const doc = await getDocumentsById(id);
         setDocument(doc);
-        setContent(doc.content || "");
+
+        // Set initial content into the editor (silently — no auto-save)
+        const initialContent = doc.content || "";
+        contentRef.current = initialContent;
+        setEditorContentSilently(initialContent);
 
         // Determine the user's role for this document
         if (!user) {
-          // Anonymous user viewing a public document
           setUserRole(doc.is_public ? "viewer" : null);
         } else {
           try {
@@ -73,7 +148,7 @@ export default function DocumentPage() {
       }
     };
     init();
-  }, [id]);
+  }, [id, editor]);
 
   /* ── Real-time document sync ── */
   useEffect(() => {
@@ -89,10 +164,20 @@ export default function DocumentPage() {
           filter: `id=eq.${id}`,
         },
         (payload) => {
-          // Use ref (not state) to get the current value inside the closure
-          if (!isLocalChangeRef.current) {
-            setContent(payload.new.content);
-          }
+          if (!editor) return;
+
+          const newContent = payload.new.content || "";
+
+          // Skip if user is actively editing (they'll auto-save soon)
+          if (isLocalChangeRef.current) return;
+
+          // Skip if content is identical to what's in the editor
+          // (this catches our own save echoes)
+          if (newContent === editor.getHTML()) return;
+
+          // Apply the remote change silently (no auto-save trigger)
+          contentRef.current = newContent;
+          setEditorContentSilently(newContent);
         },
       )
       .subscribe();
@@ -100,7 +185,7 @@ export default function DocumentPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [id]);
+  }, [id, editor]);
 
   /* ── Mouse tracking (throttled) ── */
   useEffect(() => {
@@ -172,7 +257,7 @@ export default function DocumentPage() {
     setSaving(true);
     const timeout = setTimeout(async () => {
       try {
-        await updateDocument(id, content);
+        await updateDocument(id, contentRef.current);
       } catch (err) {
         console.error("Auto-save failed:", err);
       }
@@ -181,13 +266,7 @@ export default function DocumentPage() {
       setSaving(false);
     }, 1000);
     return () => clearTimeout(timeout);
-  }, [content, isLocalChange, canEdit]);
-
-  /* ── Text selection for comments ── */
-  const handleTextSelect = () => {
-    const selected = window.getSelection().toString();
-    if (selected.length > 0) setSelectedText(selected);
-  };
+  }, [isLocalChange, canEdit]);
 
   /* ── Add comment (uses real auth user ID when available) ── */
   const handleAddComment = async () => {
@@ -312,21 +391,12 @@ export default function DocumentPage() {
           className={`flex-1 flex flex-col transition-all duration-300 ${showComments ? "md:mr-[360px]" : ""}`}
         >
           {/* Toolbar */}
-          <div className="flex justify-center px-4 py-3 border-b border-slate-100">
-            <EditorToolbar disabled={!canEdit} />
+          <div className="sticky top-16 z-10 flex justify-center px-2 sm:px-4 py-2 sm:py-3 border-b border-slate-100 bg-white/80 backdrop-blur-sm">
+            <EditorToolbar editor={editor} disabled={!canEdit} />
           </div>
 
           {/* Editor */}
-          <EditorArea
-            content={content}
-            onChange={(e) => {
-              setContent(e.target.value);
-              setIsLocalChange(true);
-              isLocalChangeRef.current = true;
-            }}
-            onMouseUp={handleTextSelect}
-            readOnly={!canEdit}
-          />
+          <EditorArea editor={editor} />
         </div>
 
         {/* Comments Panel */}
