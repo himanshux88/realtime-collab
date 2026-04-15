@@ -5,6 +5,7 @@ import Link from "next/link";
 import { signUp } from "features/auth/api";
 import Button from "components/ui/Button";
 import Input from "components/ui/Input";
+import { useRouter } from "next/navigation";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -12,6 +13,7 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
+  const router = useRouter()
 
   const handleSignup = async (e) => {
     e.preventDefault();
@@ -21,6 +23,7 @@ export default function SignupPage() {
     try {
       await signUp(email, password);
       setSuccess(true);
+      router.push('/login')
     } catch (err) {
       setError(err.message || "Signup failed");
     } finally {
